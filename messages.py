@@ -43,33 +43,39 @@ def strSplitComma(s):
 def createPrepareMsg(proposer):
 	msg = {}
 	msg["msg"] = "PREPARE"
+	msg["src-name"] = proposer.sMeta["name"]
 	msg["bal-num"] = proposer.balNum
 	return msg
 
 def createAcceptMsg(proposer):
 	msg = {}
 	msg["msg"] = "ACCEPT"
+	msg["src-name"] = proposer.sMeta["name"]
 	msg["bal-num"] = proposer.balNum
 	msg["val"] = proposer.val
-	return msg;
+	return msg
 
 def createDecisionMsg(proposer):
 	msg = {}
 	msg["msg"] = "DECISION"
+	msg["src-name"] = proposer.sMeta["name"]
 	msg["bal-num"] = proposer.balNum
 	msg["val"] = proposer.val
+	return msg
 
 def createPrepareAck(acceptor):
 	msg = {}
 	msg["msg"] = "PREP-ACK"
 	#msg["bal-num"] = acceptor.minBal
+	msg["src-name"] = acceptor.sMeta["name"]
 	msg["accept-num"] = acceptor.acceptNum 
 	msg["accept-val"] = acceptor.acceptVal
-	return msg;
+	return msg
 
 def createAcceptAck(acceptor):
 	msg = {}
 	msg["msg"] = "ACCEPT-ACK"
+	msg["src-name"] = acceptor.sMeta["name"]
 	msg["accept-num"] = acceptor.acceptNum
 	msg["accept-val"] = acceptor.acceptVal
-	return msg;
+	return msg

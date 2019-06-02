@@ -17,7 +17,7 @@ class Server:
 		self.set = [];
 		self.blockchain = [];
 		self.proposer = Proposer(self.config, globalConfig)
-		self.acceptor = Acceptor()
+		self.acceptor = Acceptor(self.config)
 		#self.client_sock = client_sock #client socket for client server is connected to
 	def run(self):
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -37,8 +37,9 @@ class Server:
 		msg = conn.recv(1024)
 		if (msg):
 			decodedMsg = pickle.loads(msg)
-			t1 = threading.Thread(target=Server.handleClientMsg, args=(self, decodedMsg, conn,))
-			t1.start()
+			if (decodedMsg is not None):
+				t1 = threading.Thread(target=Server.handleClientMsg, args=(self, decodedMsg, conn,))
+				t1.start()
 			
 	def handleClientMsg(self, decodedMsg, conn):
 		print(decodedMsg)
@@ -59,16 +60,16 @@ class Server:
 		# 	t1.start()
 	def handlePaxos(self, decodedMsg, conn):
 		if decodedMsg["msg"] == "TRANSFER":
-			#form block here
+			#form block here / mining THEN create ballotThread
 			self.createBallotThread(decodedMsg, conn,)
 		elif decodedMsg["msg"] == "PREPARE":
 			#print("in here")
-			self.acceptor.recvPrepare(decodedMsg, conn)
+			self.acceptor.recvPrepare(decodedMsg)
 		elif decodedMsg["msg"] == "PREP-ACK":
 			print("in here")
 			self.proposer.handlePrepAck(decodedMsg)
 		elif decodedMsg["msg"] == "ACCEPT":
-			self.acceptor.recvAccept(decodedMsg, conn)
+			self.acceptor.recvAccept(decodedMsg)
 		elif decodedMsg["msg"] == "ACCEPT-ACK":
 			self.proposer.handleAcceptAck()
 		elif decodedMsg["msg"] == "DECISION":
@@ -80,6 +81,8 @@ class Server:
 			#print("client socket closed")
 			#conn.close()
 		#print("outside if")
+		t1 = threading.Thread(target=Server.handleReq, args=(self, conn,))
+		t1.start()
 	def createBallotThread(self, decodedMsg, conn):
 		self.proposer.createBallot(decodedMsg["amount"], len(self.blockchain))
 
