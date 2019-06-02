@@ -7,13 +7,17 @@ import sys
 import threading
 import time
 from messages import createServerRes, randDelay
+from paxos import Ballot, Proposer, Acceptor
+from blockchain import Block
 
 class Server:
-	def __init__(self, config, client_sock=None):
+	def __init__(self, config, globalConfig, client_sock=None):
 		self.config = config
 		self.init_balance = 100
 		self.set = [];
 		self.blockchain = [];
+		self.proposer = Proposer(self.config, globalConfig)
+		self.acceptor = Acceptor()
 		#self.client_sock = client_sock #client socket for client server is connected to
 	def run(self):
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -21,54 +25,82 @@ class Server:
 		sock.listen()
 		print("Server is listening...")
 		while True:
-			print("iter while loop")
+			#print("iter while loop")
 			conn, addr = sock.accept()
-			print("Start thread")
+			#print("Start thread")
 			t1 = threading.Thread(target=Server.handleReq, args=(self, conn,))
 			t1.start()
-		print("server socket closed.")
+		#print("server socket closed.")
 		sock.close()
+	# do server or proposer thread based on message received
 	def handleReq(self, conn):
-		print("handling")
-		msg = conn.recv(1024) #will this take in one pickle or multiple
+		msg = conn.recv(1024)
 		if (msg):
 			decodedMsg = pickle.loads(msg)
-			print("decodedMsg: ", decodedMsg)
-			res = {}
-			if decodedMsg["msg"] == "TRANSFER":
-				res = Server.handleTransfer(self, decodedMsg, conn)
-			elif decodedMsg["msg"] == "PRINTBLOCKCHAIN":
-				res = Server.printBlockchain(self, decodedMsg, conn)
-			elif decodedMsg["msg"] == "PRINTBALANCE":
-				res = Server.printBalance(self, decodedMsg, conn)
-			elif decodedMsg["msg"] == "PRINTSET":
-				res = Server.printSet(self, decodedMsg, conn)
-			encRes = pickle.dumps(res)
-			print("Sending ", res)
-			time.sleep(randDelay())
-			conn.sendall(encRes)
+			t1 = threading.Thread(target=Server.handleClientMsg, args=(self, decodedMsg, conn,))
+			t1.start()
+			
+	def handleClientMsg(self, decodedMsg, conn):
+		print(decodedMsg)
+		if decodedMsg["msg"] == "TRANSFER":
+			#add to set
+			self.set.append(decodedMsg)
+			if len(self.set) >= 2:
+				self.handlePaxos(decodedMsg, conn)
+		elif decodedMsg["msg"] == "PRINTBLOCKCHAIN":
+			self.printBlockchain(decodedMsg, conn)
+		elif decodedMsg["msg"] == "PRINTBALANCE":
+			self.printBalance(decodedMsg, conn)
+		elif decodedMsg["msg"] == "PRINTSET":
+			self.printSet(decodedMsg, conn)
+		else:
+			self.handlePaxos(decodedMsg, conn)
+		# 	t1 = threading.Thread(target=Server.handlePaxos, args=(self, decodedMsg, conn,))
+		# 	t1.start()
+	def handlePaxos(self, decodedMsg, conn):
+		if decodedMsg["msg"] == "TRANSFER":
+			#form block here
+			self.createBallotThread(decodedMsg, conn,)
+		elif decodedMsg["msg"] == "PREPARE":
+			#print("in here")
+			self.acceptor.recvPrepare(decodedMsg, conn)
+		elif decodedMsg["msg"] == "PREP-ACK":
+			print("in here")
+			self.proposer.handlePrepAck(decodedMsg)
+		elif decodedMsg["msg"] == "ACCEPT":
+			self.acceptor.recvAccept(decodedMsg, conn)
+		elif decodedMsg["msg"] == "ACCEPT-ACK":
+			self.proposer.handleAcceptAck()
+		elif decodedMsg["msg"] == "DECISION":
+			self.handleDecision(decodedMsg)
+			#encRes = pickle.dumps(res)
+			#print("Sending ", res)
+			#time.sleep(randDelay())
+			#conn.sendall(encRes)
 			#print("client socket closed")
-			conn.close()
-		print("outside if")
-	def broadcast(self, msg):
-		# for all active / connected nodes
-		data = "Test Broadcase."
-	def handleTransfer(self, dMsg, conn):
-		data = "Transfer Success."
-		msg = createServerRes(self.config, dMsg, data, "SUCCESS")
-		return msg
+			#conn.close()
+		#print("outside if")
+	def createBallotThread(self, decodedMsg, conn):
+		self.proposer.createBallot(decodedMsg["amount"], len(self.blockchain))
+
+	def handleDecision(self, dMsg):
+		# ADD TO BLOCKCHAIN
+		print("Commiting block to blockchain. Msg: ", dMsg)
 	def printBlockchain(self, dMsg, conn):
 		data = "Test Blockchain."
 		msg = createServerRes(self.config, dMsg, data, "BLOCKCHAIN")
-		return msg
+		encMsg = pickle.dumps(msg)
+		conn.sendall(encMsg)
 	def printBalance(self, dMsg, conn):
 		data = "Balance: Test."
 		msg = createServerRes(self.config, dMsg, data, "BALANCE")
-		return msg
+		encMsg = pickle.dumps(msg)
+		conn.sendall(encMsg)
 	def printSet(self, dMsg, conn):
 		data = "Test Set."
 		msg = createServerRes(self.config, dMsg, data, "SET")
-		return msg
+		encMsg = pickle.dumps(msg)
+		conn.sendall(encMsg)
 
 if __name__ == "__main__":
 	with open('config.json') as f:
@@ -79,7 +111,7 @@ if __name__ == "__main__":
 
 		server_info = config[server_owner]
 
-		s = Server(server_info)
+		s = Server(server_info, config)
 		s.run()
 
 	else:

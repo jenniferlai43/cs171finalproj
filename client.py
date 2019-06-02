@@ -23,10 +23,9 @@ class Client:
 			s.connect((server_ip, server_port))
 			command = input("Enter a command: ")
 			if (Client.validateCommand(self,command)):
-				print("Started new thread")
+				#if (self.checkTransfer(command) == True):
 				t1 = threading.Thread(target=Client.sendMsg, args=(self,command,s))
 				t1.start()
-				#Client.sendMsg(self, command, s)
 			else:
 				print('Invalid command. Commands available: "moneyTransfer(<amt>, <c1>, <c2>)", "printBlockchain", "printBalance", "printSet"')
 			#s.close()
@@ -40,13 +39,13 @@ class Client:
 		encodedMsg = pickle.dumps(msgSend)
 		time.sleep(randDelay())
 		s.sendall(encodedMsg)
-		print("Command sent to server.")
+		#print("Command sent to server.")
 		res = None
 		while res is None:
 			res = s.recv(1024)
 			if (res):
 				msgRecvd = pickle.loads(res)
-				print(msgRecvd["body"])
+				print("\n" + msgRecvd["body"])
 			# if (msgRecvd["res"] == 'SUCCESS'): #successfully added to blockchain
 			# 	print("Tranfer success.")
 			# 	break;
@@ -75,6 +74,8 @@ class Client:
 					return False
 		else: 
 			return (s == "printBlockchain" or s == "printBalance" or s == "printSet")
+	def checkTransfer(self, s):
+		return (s[:13] == "moneyTransfer")
 
 if __name__ == "__main__":
 	with open('config.json') as f:

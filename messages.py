@@ -25,7 +25,7 @@ def createUserReq(ui, cmeta, vals=None):
 
 def createServerRes(smeta, cMsg, sData, res): #sData holds what server whats to send in message (like for printing)
 	msg = {}
-	msg["res"] = res
+	msg["msg"] = res
 	msg["req"] = cMsg # to keep track of what transaction it was doing
 	msg["src-ip"] = smeta["ip-addr"]
 	msg["src-port"] = smeta["port"]
@@ -39,3 +39,37 @@ def strSplitComma(s):
 		text = s[s.find("(")+1:s.find(")")]
 		vals = [x.strip() for x in text.split(',')]
 		return vals
+
+def createPrepareMsg(proposer):
+	msg = {}
+	msg["msg"] = "PREPARE"
+	msg["bal-num"] = proposer.balNum
+	return msg
+
+def createAcceptMsg(proposer):
+	msg = {}
+	msg["msg"] = "ACCEPT"
+	msg["bal-num"] = proposer.balNum
+	msg["val"] = proposer.val
+	return msg;
+
+def createDecisionMsg(proposer):
+	msg = {}
+	msg["msg"] = "DECISION"
+	msg["bal-num"] = proposer.balNum
+	msg["val"] = proposer.val
+
+def createPrepareAck(acceptor):
+	msg = {}
+	msg["msg"] = "PREP-ACK"
+	#msg["bal-num"] = acceptor.minBal
+	msg["accept-num"] = acceptor.acceptNum 
+	msg["accept-val"] = acceptor.acceptVal
+	return msg;
+
+def createAcceptAck(acceptor):
+	msg = {}
+	msg["msg"] = "ACCEPT-ACK"
+	msg["accept-num"] = acceptor.acceptNum
+	msg["accept-val"] = acceptor.acceptVal
+	return msg;
