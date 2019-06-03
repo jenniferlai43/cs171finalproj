@@ -2,8 +2,7 @@ import random
 
 def createUserReq(ui, cmeta, vals=None):
 	msg = {}
-	msg["src-ip"] = cmeta["ip-addr"]
-	msg["src-port"] = cmeta["port"]
+	msg["src-name"] = cmeta["name"]
 	#print(ui[:13])
 	if (ui[:13] == "moneyTransfer"):
 
@@ -21,6 +20,9 @@ def createUserReq(ui, cmeta, vals=None):
 
 	if (ui == "printSet"):
 		msg["msg"] = "PRINTSET"
+
+	if(ui == "crash"):
+		msg["msg"] = "CRASH"
 	return msg
 
 def createServerRes(smeta, cMsg, sData, res): #sData holds what server whats to send in message (like for printing)
@@ -30,6 +32,17 @@ def createServerRes(smeta, cMsg, sData, res): #sData holds what server whats to 
 	msg["src-ip"] = smeta["ip-addr"]
 	msg["src-port"] = smeta["port"]
 	msg["body"] = sData
+	return msg
+
+def createSyncReqMessage(smeta):
+	msg["msg"] = "SYNC"
+	msg["src-name"] = smeta["name"]
+	return msg
+
+def createSyncResMessage(smeta, blockchain):
+	msg["msg"] = "SYNC-ACK"
+	msg["src-name"] = smeta["name"]
+	msg["block-chain"] = blockchain
 	return msg
 
 def randDelay():

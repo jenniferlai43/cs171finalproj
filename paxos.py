@@ -5,9 +5,12 @@ import json
 import socket
 import threading
 from messages import createAcceptMsg, createPrepareMsg, createPrepareAck, createAcceptAck, createDecisionMsg, randDelay
+import errno
+from socket import error as socket_error
+
 
 #servers = ['A', 'B', 'C', 'D', 'E']
-servers = ['A', 'B']
+servers = ['A', 'B', 'C']
 
 with open('config.json') as f:
 	config = json.load(f)
@@ -64,20 +67,24 @@ class Proposer:
 
 	def randDelayMsg(self, phase, proc):
 		b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		b.connect((proc["ip-addr"], proc["port"]))
-		msg = {}
-		if (phase == "PREPARE"):
-			msg = createPrepareMsg(self)
-		elif (phase == "ACCEPT"): #accept
-			msg = createAcceptMsg(self)
-		else: #decision
-			msg = createDecisionMsg(self)
-		encMsg = pickle.dumps(msg)
-		time.sleep(randDelay())
-		b.sendall(encMsg)
-		b.close()
+		try:
+			b.connect((proc["ip-addr"], proc["port"]))
+			msg = {}
+			if (phase == "PREPARE"):
+				msg = createPrepareMsg(self)
+			elif (phase == "ACCEPT"): #accept
+				msg = createAcceptMsg(self)
+			else: #decision
+				msg = createDecisionMsg(self)
+			encMsg = pickle.dumps(msg)
+			time.sleep(randDelay())
+			b.sendall(encMsg)
+			b.close()
+		except socket.error as sock_err:
+			if(sock_err.errno == socket.errno.ECONNREFUSED):
+			        print("Server " + proc["name"] + " unreachable.")
 
-	def createBallot(self, proposedVal, proposedDepth,):
+	def createBallot(self, proposedVal, proposedDepth):
 		self.val = proposedVal
 		if (self.balNum is None):
 			self.balNum = Ballot(0, self.sMeta["pid"], proposedDepth)
@@ -98,6 +105,8 @@ class Proposer:
 					maxBalNum = m["accept-num"]
 					#myVal = m["accept-val"]
 					self.val = myVal
+			if (m["accept-val"] is not None and m["accept-val"].seqNum > self.proposer.balNum):
+				self.balNum = dMsg["bal-num"].seqNum + 1
 			print("Sending ACCEPT with ballot number ", str(self.balNum))
 			self.broadcast("ACCEPT")
 	def handleAcceptAck(self):
@@ -106,6 +115,10 @@ class Proposer:
 		if (self.acceptAckCount == self.majority):
 			print("Sending DECISION with ballot number ", str(self.balNum))
 			self.broadcast("DECISION")
+			#update instance vars for new thing
+			self.prepAckCount = 0
+			self.prepAckMsgList = []
+			self.acceptAckCount = 0
 		
 
 class Acceptor:
@@ -116,32 +129,49 @@ class Acceptor:
 		self.minBal = None
 	def recvPrepare(self, msg):
 		print("Received PREPARE with ballot number ", str(msg["bal-num"]))
+		print("Comparing ", str(msg["bal-num"]), " with ", str(self.minBal))
 		if (self.minBal is None or msg["bal-num"] > self.minBal):
 			self.minBal = msg["bal-num"]
 			proc = config[msg["src-name"]]
 			b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-			b.connect((proc["ip-addr"], proc["port"]))
-			msg = createPrepareAck(self)
-			encMsg = pickle.dumps(msg)
-			time.sleep(randDelay())
-			b.sendall(encMsg)
-			b.close()
-			print("Sent PREP-ACK with ballot number ", str(msg["accept-num"]))
+			try:
+				b.connect((proc["ip-addr"], proc["port"]))
+				msg = createPrepareAck(self)
+				encMsg = pickle.dumps(msg)
+				time.sleep(randDelay())
+				b.sendall(encMsg)
+				b.close()
+				print("Sent PREP-ACK with ballot number ", str(msg["accept-num"]))
+			except socket.error as sock_err:
+			    if(sock_err.errno == socket.errno.ECONNREFUSED):
+			        print("Server " + msg["src-name"] + " unreachable.")
+
 	def recvAccept(self, msg):
 		print("Received ACCEPT with ballot number ", str(msg["bal-num"]))
+		print("Comparing ", str(msg["bal-num"]), " with ", str(self.minBal))
 		if (msg["bal-num"] >= self.minBal):
 			self.acceptNum = msg["bal-num"]
 			self.minBal = msg["bal-num"]
 			self.acceptVal = msg["val"]
 			proc = config[msg["src-name"]]
 			b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-			b.connect((proc["ip-addr"], proc["port"]))
-			msg = createAcceptAck(self)
-			encMsg = pickle.dumps(msg)
-			time.sleep(randDelay())
-			b.sendall(encMsg)
-			b.close()
-			print("Sent ACCEPT-ACK with ballot number ", str(msg["accept-num"]))
+			try:
+				b.connect((proc["ip-addr"], proc["port"]))
+				msg = createAcceptAck(self)
+				encMsg = pickle.dumps(msg)
+				time.sleep(randDelay())
+				b.sendall(encMsg)
+				b.close()
+				print("Sent ACCEPT-ACK with ballot number ", str(msg["accept-num"]))
+			except socket.error as sock_err:
+			    if(sock_err.errno == socket.errno.ECONNREFUSED):
+			        print("Server " + msg["src-name"] + " unreachable.")
+	def recvDecision(self, msg):
+		print("Received DECISION with ballot number ", str(msg["bal-num"]))
+		### reset acceptor instance vals besides min ballot
+		self.minBal = msg["bal-num"]
+		self.acceptNum = None
+		self.acceptVal = None
 
 
 
