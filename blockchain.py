@@ -25,5 +25,7 @@ class Block:
 	def randNonce(self, nonceLen):
 		alphanumerics = string.digits + string.ascii_lowercase
 		return ''.join(random.choice(alphanumerics) for i in range(nonceLen))
+	def __eq__(self, other): 
+		return (self.depth == other.depth and self.prevHash == other.prevHash and self.nonce == other.nonce)
 	def __str__(self):
 		return "---\ndepth:{}\nprevHash:{}\nnonce:{}\ntx1:{}\ntx2:{}\n---".format(self.depth, self.prevHash, self.nonce, self.tx1, self.tx2)

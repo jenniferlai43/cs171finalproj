@@ -29,11 +29,12 @@ class Server:
 	def __init__(self, config, globalConfig, client_sock=None):
 		self.config = config
 		self.init_balance = 100
-		self.set = [];
-		self.blockchain = [];
+		self.set = []
+		self.blockchain = []
 		self.proposer = Proposer(self.config, globalConfig)
 		self.acceptor = Acceptor(self.config)
-		self.inPaxos = False;
+		self.inPaxos = False
+		self.ballot = None
 		#self.client_sock = client_sock #client socket for client server is connected to
 	def run(self):
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -50,15 +51,16 @@ class Server:
 		sock.close()
 	# do server or proposer thread based on message received
 	def handleReq(self, conn):
-		msg = conn.recv(1024)
-		if (msg):
-			decodedMsg = pickle.loads(msg)
-			if (decodedMsg is not None):
-				t1 = threading.Thread(target=Server.handleClientMsg, args=(self, decodedMsg, conn,))
-				t1.start()
+		while True:
+			msg = conn.recv(1024)
+			if (msg):
+				decodedMsg = pickle.loads(msg)
+				if (decodedMsg is not None):
+					t1 = threading.Thread(target=Server.handleClientMsg, args=(self, decodedMsg, conn,))
+					t1.start()
 			
 	def handleClientMsg(self, decodedMsg, conn):
-		print(decodedMsg)
+		#print(decodedMsg)
 		if decodedMsg["msg"] == "TRANSFER":
 			#add to set
 			self.set.append(decodedMsg)
@@ -79,33 +81,73 @@ class Server:
 		# 	t1.start()
 	def handlePaxos(self, decodedMsg, conn):
 		### when implementing with blockchain, don't need decodedMsg, pass in block instead
-		if decodedMsg["msg"] == "TRANSFER" and self.inPaxos == False:
-			lock.acquire()
-			self.inPaxos = True
-			lock.release()
-			block = self.transactionCheck()
-			if block is not None:
-				#validate top 2 transaction with previous blocks here THEN mine
-				#form block here / mining with first 2 items in set THEN create ballotThread
-				self.createBallotThread(block, conn)
+		if (decodedMsg["msg"] == "TRANSFER" and self.inPaxos == False) or (decodedMsg["msg"] == "RETRY" and self.inPaxos == False):
+			if (self.checkProposeReady() == True):
+				lock.acquire()
+				self.inPaxos = True
+				lock.release()
+				# block = self.transactionCheck()
+				# if block is not None:
+				# 	#validate top 2 transaction with previous blocks here THEN mine
+				# 	#form block here / mining with first 2 items in set THEN create ballotThread
+				# 	self.createBallotThread(block, conn)
+				#self.checkProposeReady()
+				# prevLen = len(self.blockchain)
+				# while (prevLen == len(self.blockchain)):
+				# 	time.sleep(12)
+				# 	if (len(self.blockchain) == prevLen):
+				# 		self.inPaxos = False
+				# 		#self.checkProposeReady()
+				# 		x = {}
+				# 		x["msg"] = "RETRY"
+				# 		self.handlePaxos(x, conn)
 		if decodedMsg["msg"] == "PREPARE":
 			#print("in here")
-			self.acceptor.recvPrepare(decodedMsg)
+			if decodedMsg["bal-num"] is None or (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
+				if (decodedMsg["src-name"] != self.config["name"] and self.proposer.balNum is not None and decodedMsg["bal-num"] >= self.proposer.balNum):
+					self.proposer.balNum = Ballot(decodedMsg["bal-num"].seqNum, self.config["pid"], len(self.blockchain))
+					print("Updated proposer balNum to ", str(self.proposer.balNum))
+				self.acceptor.recvPrepare(decodedMsg)
+				if (self.inPaxos == True): #and decodedMsg["bal-num"] > self.proposer.balNum):
+					prevLen = len(self.blockchain)
+					while (prevLen == len(self.blockchain)):
+						time.sleep(15)
+						if (self.inPaxos == True):
+							self.inPaxos = False
+							#self.checkProposeReady()
+							x = {}
+							x["msg"] = "RETRY"
+							self.handlePaxos(x, conn)
 		elif decodedMsg["msg"] == "PREP-ACK":
-			print("in here")
-			self.proposer.handlePrepAck(decodedMsg)
+			#print("in here")
+			if decodedMsg["accept-num"] is None or (decodedMsg["accept-num"] is not None or decodedMsg["accept-num"].depth == len(self.blockchain)):
+				self.proposer.handlePrepAck(decodedMsg)
 		elif decodedMsg["msg"] == "ACCEPT":
-			self.acceptor.recvAccept(decodedMsg)
+			if decodedMsg["bal-num"] is None or (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
+				if (decodedMsg["src-name"] != self.config["name"] and self.proposer.balNum is not None and decodedMsg["bal-num"] >= self.proposer.balNum):
+					self.proposer.balNum = Ballot(decodedMsg["bal-num"].seqNum, self.config["pid"], len(self.blockchain))
+					print("Updated proposer balNum to ", str(self.proposer.balNum))
+				self.acceptor.recvAccept(decodedMsg)
+				# if (self.inPaxos == True): # and decodedMsg["bal-num"] > self.proposer.balNum):
+				# 	prevLen = len(self.blockchain)
+				# 	while (prevLen == len(self.blockchain)):
+				# 		time.sleep(10)
+				# 		if (self.inPaxos == True):
+				# 			self.inPaxos = False
+				# 			#self.checkProposeReady()
+				# 			x = {}
+				# 			x["msg"] = "RETRY"
+				# 			self.handlePaxos(x, conn)
 		elif decodedMsg["msg"] == "ACCEPT-ACK":
-			self.proposer.handleAcceptAck()
+			if decodedMsg["accept-num"] is None or (decodedMsg["accept-num"] is not None and decodedMsg["accept-num"].depth == len(self.blockchain)):
+				self.proposer.handleAcceptAck(decodedMsg)
 		elif decodedMsg["msg"] == "DECISION":
-			self.handleDecision(decodedMsg)
-			if self.inPaxos == False:
-				block = self.transactionCheck()
-				if block is not None:
-					#validate top 2 transaction with previous blocks here THEN mine
-					#form block here / mining with first 2 items in set THEN create ballotThread
-					self.createBallotThread(block, conn)
+			if decodedMsg["bal-num"] is None or (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
+				self.handleDecision(decodedMsg)
+				print("in Paxos? ", self.inPaxos)
+				x = {}
+				x["msg"] = "RETRY"
+				self.handlePaxos(x, conn)
 			#self.createBallotThread(test, conn)
 			#run handlePaxos here or something that creates new ballot if set >=2
 
@@ -116,8 +158,18 @@ class Server:
 			#print("client socket closed")
 			#conn.close()
 		#print("outside if")
-		t1 = threading.Thread(target=Server.handleReq, args=(self, conn,))
-		t1.start()
+		#t1 = threading.Thread(target=Server.handleReq, args=(self, conn,))
+		#t1.start()
+
+	def checkProposeReady(self):
+		block = self.transactionCheck()
+		if block is not None:
+			#validate top 2 transaction with previous blocks here THEN mine
+			#form block here / mining with first 2 items in set THEN create ballotThread
+			self.inPaxos = True
+			self.createBallotThread(block)
+			return True
+		return False
 	def transactionCheck(self):
 		val = None;
 		if (len(self.set)>=2):
@@ -182,28 +234,36 @@ class Server:
 		b.mine()
 		return b
 
-	def createBallotThread(self, block, conn):
+	def createBallotThread(self, block):
 		self.proposer.createBallot(block, len(self.blockchain))
 
 	def handleDecision(self, dMsg):
 		# ADD TO BLOCKCHAIN
 		self.acceptor.recvDecision(dMsg)
+		# if (self.proposer.val is not None):
+		# 	print(str(self.proposer.val))
 		if (dMsg["val"].depth >= len(self.blockchain)):
-			if (len(self.set)>=2 and dMsg["val"].tx1 == msgFormatTrans(self.set[0]) and dMsg["val"].tx2 == msgFormatTrans(self.set[1])):
-				#print(self.set)
+			# if ((self.proposer.val is not None and dMsg["val"] == self.proposer.val) or dMsg["val"].depth == len(self.blockchain)):
+			# 	#print(self.set)
+			# 	print("Self no longer proposing.")
+			# 	lock.acquire()
+			# 	self.inPaxos = False
+			# 	lock.release()
+			if (self.inPaxos == True and len(self.set)>=2 and dMsg["val"].tx1 == msgFormatTrans(self.set[0]) and dMsg["val"].tx2 == msgFormatTrans(self.set[1])):
 				lock.acquire()
 				self.inPaxos = False
 				lock.release()
+				print("Popped transactions from set.")
 				self.set.pop(0) # pop first 2 items because committed successfully
 				self.set.pop(0)
 			self.blockchain.append(dMsg["val"])
 			print("Commiting block to blockchain. Block: \n", dMsg["val"])
 		else:
 			print("Not commiting block. Block Depth < Current Blockchain Depth")
-		if (self.proposer.balNum is None or dMsg["bal-num"].seqNum > self.proposer.balNum.seqNum):
-			self.proposer.balNum = dMsg["bal-num"]
-			self.proposer.balNum.pid = self.config["pid"]
-			print("Updated seq num to ", self.proposer.balNum.seqNum)
+		# if (self.proposer.balNum is None or dMsg["bal-num"].seqNum > self.proposer.balNum.seqNum):
+		# 	self.proposer.balNum = dMsg["bal-num"]
+		# 	self.proposer.balNum.pid = self.config["pid"]
+		# 	print("Updated seq num to ", self.proposer.balNum.seqNum)
 	def printBlockchain(self, dMsg, conn):
 		#data = "Test Blockchain."
 		msg = createServerRes(self.config, dMsg, self.blockchain, "BLOCKCHAIN-ACK")
@@ -215,6 +275,7 @@ class Server:
 		encMsg = pickle.dumps(msg)
 		conn.sendall(encMsg)
 	def printSet(self, dMsg, conn):
+		print("printing set")
 		setList = []
 		for tran in self.set:
 			setList.append(msgFormatTrans(tran))

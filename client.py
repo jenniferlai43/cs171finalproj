@@ -44,7 +44,8 @@ class Client:
 			msgSend = createUserReq(command, self.config)
 		#print("trying to send ", msgSend)
 		encodedMsg = pickle.dumps(msgSend)
-		time.sleep(randDelay())
+		if (command != "crash"):
+			time.sleep(randDelay())
 		s.sendall(encodedMsg)
 		#print("Command sent to server.")
 		res = None
@@ -61,20 +62,21 @@ class Client:
 			# 	break;
 				if (msgRecvd["msg"]  == 'BLOCKCHAIN-ACK'):
 					for b in msgRecvd["body"]:
-						print(str(b)) # some variation of this
+						print('\n',str(b)) # some variation of this
 				#break;
 				elif (msgRecvd["msg"] == 'BALANCE-ACK'):
 					for key in msgRecvd["body"]:
 						print("{}: ${}".format(key, msgRecvd["body"][key])) # some variation of this
 
 				elif(msgRecvd["msg"] == 'SET-ACK'):
+					print('\n')
 					for t in msgRecvd["body"]:
 						print(t)   
 	def validateCommand(self, s):
 		if (s[:13] == "moneyTransfer"):
 			if (s.find("(") > -1 and s.find(")") > -1):
 				vals = strSplitComma(s)
-				print(vals)
+				#print(vals)
 				if (len(vals) == 3 and vals[0].isdigit() and vals[1] == self.config["name"] and vals[2] in clients):
 					return True
 				else:

@@ -92,3 +92,20 @@ def createAcceptAck(acceptor):
 	msg["accept-num"] = acceptor.acceptNum
 	msg["accept-val"] = acceptor.acceptVal
 	return msg
+
+def createResyncRequest(server):
+	msg = {}
+	msg["msg"] = "RESYNC"
+	msg["src-name"] = server.config["name"]
+	if (len(server.blockchain) == 0)
+		msg["cur-depth"] = None
+	else:
+		msg["cur-depth"] = len(server.blockchain-1) # other server should send blocks with depth >= cur-depth + 1
+	return msg
+
+def createResyncAck(server, relevantBlockchain):
+	msg = {}
+	msg["msg"] = "RESYNC-ACK"
+	msg["src-name"] = server.config["name"]
+	msg["blockchain"] = relevantBlockchain
+	return msg
