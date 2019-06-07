@@ -97,7 +97,7 @@ def createResyncRequest(server):
 	msg = {}
 	msg["msg"] = "RESYNC"
 	msg["src-name"] = server.config["name"]
-	if (len(server.blockchain) == 0)
+	if (len(server.blockchain) == 0):
 		msg["cur-depth"] = None
 	else:
 		msg["cur-depth"] = len(server.blockchain-1) # other server should send blocks with depth >= cur-depth + 1

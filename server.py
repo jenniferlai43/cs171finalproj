@@ -7,7 +7,7 @@ import socket
 import sys
 import threading
 import time
-from messages import createServerRes, randDelay
+from messages import createServerRes, randDelay, createResyncRequest, createResyncAck
 from paxos import Ballot, Proposer, Acceptor
 from blockchain import Block
 import os
@@ -28,6 +28,7 @@ def transFormatDict(s):
 class Server:
 	def __init__(self, config, globalConfig, client_sock=None):
 		self.config = config
+		self.globalConfig = globalConfig
 		self.init_balance = 100
 		self.set = []
 		self.blockchain = []
@@ -53,14 +54,19 @@ class Server:
 	def handleReq(self, conn):
 		while True:
 			msg = conn.recv(1024)
-			if (msg):
-				decodedMsg = pickle.loads(msg)
-				if (decodedMsg is not None):
+			#if (msg):
+			msg_set = set()
+			msg_set.add(msg)
+			for m in msg_set:
+				if m:
+					decodedMsg = pickle.loads(msg)
+					#print("handling msg: ", decodedMsg)
 					t1 = threading.Thread(target=Server.handleClientMsg, args=(self, decodedMsg, conn,))
 					t1.start()
+				
 			
 	def handleClientMsg(self, decodedMsg, conn):
-		#print(decodedMsg)
+		#print("thread msg recvd", decodedMsg)
 		if decodedMsg["msg"] == "TRANSFER":
 			#add to set
 			self.set.append(decodedMsg)
@@ -75,37 +81,50 @@ class Server:
 		elif decodedMsg["msg"] == "CRASH":
 			print("Emulating server crash.")
 			os._exit(1)
+		elif decodedMsg["msg"] == "RESYNC":
+			print("Received RESYNC request from ", decodedMsg["src-name"])
+			startIndex = decodedMsg["cur-depth"]
+			partialBlockchain = []
+			if (startIndex is None):
+				startIndex = 0
+			else:
+				startIndex = startIndex + 1
+			for x in range(startIndex, len(self.blockchain)):
+				b = self.blockchain[x]
+				copiedB = Block(b.tx1, b.tx2, b.prevHash, b.depth, b.nonce)
+				partialBlockchain.append(copiedB)
+			print("Sending partial blockchain to ", decodedMsg["src-name"])
+			encMsg = pickle.dumps(createResyncAck(self, partialBlockchain))
+			conn.sendall(encMsg)
+			b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+			try:
+				b.connect((self.globalConfig[decodedMsg["src-name"]]["ip-addr"],self.globalConfig[decodedMsg["src-name"]]["port"]))
+				time.sleep(randDelay())
+				b.sendall(encMsg)
+				b.close()
+			except socket.error as sock_err:
+				if(sock_err.errno == socket.errno.ECONNREFUSED):
+				        print("Server " + proc["name"] + " unreachable.")
+		elif decodedMsg["msg"] == "RESYNC-ACK":
+			self.blockchain.extend(partialBlockchain)
 		else:
 			self.handlePaxos(decodedMsg, conn)
 		# 	t1 = threading.Thread(target=Server.handlePaxos, args=(self, decodedMsg, conn,))
 		# 	t1.start()
 	def handlePaxos(self, decodedMsg, conn):
 		### when implementing with blockchain, don't need decodedMsg, pass in block instead
+		lock.acquire()
 		if (decodedMsg["msg"] == "TRANSFER" and self.inPaxos == False) or (decodedMsg["msg"] == "RETRY" and self.inPaxos == False):
-			if (self.checkProposeReady() == True):
-				lock.acquire()
+			if (len(self.set) >= 2):
 				self.inPaxos = True
-				lock.release()
-				# block = self.transactionCheck()
-				# if block is not None:
-				# 	#validate top 2 transaction with previous blocks here THEN mine
-				# 	#form block here / mining with first 2 items in set THEN create ballotThread
-				# 	self.createBallotThread(block, conn)
-				#self.checkProposeReady()
-				# prevLen = len(self.blockchain)
-				# while (prevLen == len(self.blockchain)):
-				# 	time.sleep(12)
-				# 	if (len(self.blockchain) == prevLen):
-				# 		self.inPaxos = False
-				# 		#self.checkProposeReady()
-				# 		x = {}
-				# 		x["msg"] = "RETRY"
-				# 		self.handlePaxos(x, conn)
+				if (self.checkProposeReady() == True):
+					self.inPaxos = False
+		lock.release()
 		if decodedMsg["msg"] == "PREPARE":
 			#print("in here")
-			if decodedMsg["bal-num"] is None or (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
-				if (decodedMsg["src-name"] != self.config["name"] and self.proposer.balNum is not None and decodedMsg["bal-num"] >= self.proposer.balNum):
-					self.proposer.balNum = Ballot(decodedMsg["bal-num"].seqNum, self.config["pid"], len(self.blockchain))
+			if (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
+				if (decodedMsg["src-name"] != self.config["name"] and self.proposer.balNum is not None and decodedMsg["bal-num"].seqNum > self.proposer.curSeqNum):
+					self.proposer.curSeqNum = decodedMsg["bal-num"].seqNum
 					print("Updated proposer balNum to ", str(self.proposer.balNum))
 				self.acceptor.recvPrepare(decodedMsg)
 				if (self.inPaxos == True): #and decodedMsg["bal-num"] > self.proposer.balNum):
@@ -120,12 +139,12 @@ class Server:
 							self.handlePaxos(x, conn)
 		elif decodedMsg["msg"] == "PREP-ACK":
 			#print("in here")
-			if decodedMsg["accept-num"] is None or (decodedMsg["accept-num"] is not None or decodedMsg["accept-num"].depth == len(self.blockchain)):
+			if decodedMsg["accept-num"] is None or (decodedMsg["accept-num"] is not None and decodedMsg["accept-num"].depth == len(self.blockchain)):
 				self.proposer.handlePrepAck(decodedMsg)
 		elif decodedMsg["msg"] == "ACCEPT":
-			if decodedMsg["bal-num"] is None or (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
+			if (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
 				if (decodedMsg["src-name"] != self.config["name"] and self.proposer.balNum is not None and decodedMsg["bal-num"] >= self.proposer.balNum):
-					self.proposer.balNum = Ballot(decodedMsg["bal-num"].seqNum, self.config["pid"], len(self.blockchain))
+					self.proposer.curSeqNum = decodedMsg["bal-num"].seqNum
 					print("Updated proposer balNum to ", str(self.proposer.balNum))
 				self.acceptor.recvAccept(decodedMsg)
 				# if (self.inPaxos == True): # and decodedMsg["bal-num"] > self.proposer.balNum):
@@ -142,12 +161,26 @@ class Server:
 			if decodedMsg["accept-num"] is None or (decodedMsg["accept-num"] is not None and decodedMsg["accept-num"].depth == len(self.blockchain)):
 				self.proposer.handleAcceptAck(decodedMsg)
 		elif decodedMsg["msg"] == "DECISION":
-			if decodedMsg["bal-num"] is None or (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
+			#if (decodedMsg["bal-num"] is None) or (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
+			if (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
+				self.proposer.curSeqNum = 0
 				self.handleDecision(decodedMsg)
 				print("in Paxos? ", self.inPaxos)
 				x = {}
 				x["msg"] = "RETRY"
 				self.handlePaxos(x, conn)
+			elif decodedMsg["bal-num"] and ((len(self.blockchain) == 0 and decodedMsg["bal-num"].depth > 0) or (len(self.blockchain) < decodedMsg["bal-num"].depth)):
+				print("Sending RESYNC request to server ", decodedMsg["src-name"])
+				encMsg = pickle.dumps(createResyncRequest(self))
+				b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+				try:
+					b.connect((self.globalConfig[decodedMsg["src-name"]]["ip-addr"],self.globalConfig[decodedMsg["src-name"]]["port"]))
+					time.sleep(randDelay())
+					b.sendall(encMsg)
+					b.close()
+				except socket.error as sock_err:
+					if(sock_err.errno == socket.errno.ECONNREFUSED):
+					        print("Server " + proc["name"] + " unreachable.")
 			#self.createBallotThread(test, conn)
 			#run handlePaxos here or something that creates new ballot if set >=2
 
@@ -166,7 +199,6 @@ class Server:
 		if block is not None:
 			#validate top 2 transaction with previous blocks here THEN mine
 			#form block here / mining with first 2 items in set THEN create ballotThread
-			self.inPaxos = True
 			self.createBallotThread(block)
 			return True
 		return False
@@ -239,27 +271,24 @@ class Server:
 
 	def handleDecision(self, dMsg):
 		# ADD TO BLOCKCHAIN
+		lock.acquire()
 		self.acceptor.recvDecision(dMsg)
 		# if (self.proposer.val is not None):
 		# 	print(str(self.proposer.val))
-		if (dMsg["val"].depth >= len(self.blockchain)):
-			# if ((self.proposer.val is not None and dMsg["val"] == self.proposer.val) or dMsg["val"].depth == len(self.blockchain)):
-			# 	#print(self.set)
-			# 	print("Self no longer proposing.")
-			# 	lock.acquire()
-			# 	self.inPaxos = False
-			# 	lock.release()
-			if (self.inPaxos == True and len(self.set)>=2 and dMsg["val"].tx1 == msgFormatTrans(self.set[0]) and dMsg["val"].tx2 == msgFormatTrans(self.set[1])):
-				lock.acquire()
-				self.inPaxos = False
-				lock.release()
-				print("Popped transactions from set.")
+		if (dMsg["bal-num"].depth == len(self.blockchain)):
+			
+			#if (dMsg["bal-num"].pid == self.config["pid"]) or (self.inPaxos == True and self.proposer.val is not None and dMsg["val"].tx1 == self.proposer.val.tx1 and dMsg["val"].tx2 == self.proposer.val.tx2):
+			self.inPaxos = False
+			if (len(self.set) >= 2 and dMsg["val"].tx1 == msgFormatTrans(self.set[0]) and dMsg["val"].tx2 == msgFormatTrans(self.set[1])):
 				self.set.pop(0) # pop first 2 items because committed successfully
 				self.set.pop(0)
+				print("Popped transactions from set.")
 			self.blockchain.append(dMsg["val"])
+			print("New blockchain length: ", len(self.blockchain))
 			print("Commiting block to blockchain. Block: \n", dMsg["val"])
 		else:
 			print("Not commiting block. Block Depth < Current Blockchain Depth")
+		lock.release()
 		# if (self.proposer.balNum is None or dMsg["bal-num"].seqNum > self.proposer.balNum.seqNum):
 		# 	self.proposer.balNum = dMsg["bal-num"]
 		# 	self.proposer.balNum.pid = self.config["pid"]

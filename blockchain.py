@@ -3,10 +3,10 @@ import random
 import string
 
 class Block:
-	def __init__(self, t1, t2, prevHash = None, depth=0):
+	def __init__(self, t1, t2, prevHash = None, depth=0, nonce = None):
 		self.depth = depth
 		self.prevHash = prevHash
-		self.nonce = None
+		self.nonce = nonce
 		self.tx1 = t1
 		self.tx2 = t2
 	def mine(self):
