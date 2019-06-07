@@ -28,7 +28,11 @@ class Client:
 				if (Client.validateCommand(self,command)):
 					#if (self.checkTransfer(command) == True):
 					t1 = threading.Thread(target=Client.sendMsg, args=(self,command,s))
-					t1.start()
+					if (command == "crash" or command == "printSet" or command == "printBlockchain" or command == "printBalance"):
+						t1.start()
+						t1.join()
+					else:
+						t1.start()
 				else:
 					print('Invalid command. Commands available: "moneyTransfer(<amt>, <c1>, <c2>)", "printBlockchain", "printBalance", "printSet"')
 			except socket.error as sock_err:
@@ -44,13 +48,13 @@ class Client:
 			msgSend = createUserReq(command, self.config)
 		#print("trying to send ", msgSend)
 		encodedMsg = pickle.dumps(msgSend)
-		if (command != "crash"):
+		if (command != "crash" and command != "printSet" and command != "printBlockchain" and command != "printBalance"):
 			time.sleep(randDelay())
 		s.sendall(encodedMsg)
 		#print("Command sent to server.")
 		res = None
 		while res is None:
-			res = s.recv(1024)
+			res = s.recv(4096)
 			if (res):
 				msgRecvd = pickle.loads(res)
 				#print("\n" + msgRecvd["body"])
@@ -62,16 +66,19 @@ class Client:
 			# 	break;
 				if (msgRecvd["msg"]  == 'BLOCKCHAIN-ACK'):
 					for b in msgRecvd["body"]:
-						print('\n',str(b)) # some variation of this
+						print(str(b)) # some variation of this
 				#break;
 				elif (msgRecvd["msg"] == 'BALANCE-ACK'):
+					print('Balance:')
 					for key in msgRecvd["body"]:
 						print("{}: ${}".format(key, msgRecvd["body"][key])) # some variation of this
 
 				elif(msgRecvd["msg"] == 'SET-ACK'):
-					print('\n')
+					print('Queued Transactions:')
 					for t in msgRecvd["body"]:
-						print(t)   
+						print(t) 
+				elif(msgRecvd["msg"] == 'TRANSFER-ACK'):
+					print(msgRecvd["body"])
 	def validateCommand(self, s):
 		if (s[:13] == "moneyTransfer"):
 			if (s.find("(") > -1 and s.find(")") > -1):

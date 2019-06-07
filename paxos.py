@@ -9,8 +9,8 @@ import errno
 from socket import error as socket_error
 
 
-#servers = ['A', 'B', 'C', 'D', 'E']
-servers = ['A', 'B', 'C']
+servers = ['A', 'B', 'C', 'D', 'E']
+#servers = ['A', 'B', 'C']
 
 lock = threading.Lock()
 
@@ -58,7 +58,7 @@ class Proposer:
 		self.sMeta = sMeta
 		self.val = None
 		self.name = sMeta["name"]
-		self.majority = 2 #math.ceil(config["server-count"]/2)
+		self.majority = math.ceil(config["server-count"]/2) 
 		self.config = config
 		self.prepAckCount = 0
 		self.prepAckMsgList = []
@@ -217,6 +217,7 @@ class Acceptor:
 	def recvDecision(self, msg):
 		print("Received DECISION with ballot number ", str(msg["bal-num"]), " from ", msg["src-name"])
 		### reset acceptor instance vals besides min ballot
+		print("Resetting acceptor values.")
 		self.minBal = None
 		self.acceptNum = None
 		self.acceptVal = None
