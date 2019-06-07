@@ -11,8 +11,10 @@ from messages import createServerRes, randDelay, createResyncRequest, createResy
 from paxos import Ballot, Proposer, Acceptor
 from blockchain import Block
 import os
+from network import PARTITION
 
 lock = threading.Lock()
+
 servers = ['A', 'B', 'C', 'D', 'E']
 
 def msgFormatTrans(m1):
@@ -36,10 +38,10 @@ class Server:
 		self.proposer = Proposer(self.config, globalConfig)
 		self.acceptor = Acceptor(self.config)
 		self.inPaxos = False
-		self.ballot = None
-		#self.client_sock = client_sock #client socket for client server is connected to
+
 	def run(self):
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		sock.bind((self.config["ip-addr"], self.config["port"]))
 		sock.listen()
 		try:
@@ -50,28 +52,21 @@ class Server:
 		except:
 	   		print("File doesn't exist.")
 
-		#self.askResync()
+		self.askResync()
 		print("Server is listening...")
 		while True:
-			#print("iter while loop")
 			conn, addr = sock.accept()
-			#print("Start thread")
 			t1 = threading.Thread(target=Server.handleReq, args=(self, conn,))
 			t1.start()
-		#print("server socket closed.")
-		#sock.close()
-	# do server or proposer thread based on message received
 	def handleReq(self, conn):
 		while True:
 			msg = conn.recv(1024)
-			#if (msg):
 			msg_set = set()
 			msg_set.add(msg)
 			for m in msg_set:
 				if m:
 					try:
 						decodedMsg = pickle.loads(msg)
-						#print("handling msg: ", decodedMsg)
 						t1 = threading.Thread(target=Server.handleClientMsg, args=(self, decodedMsg, conn,))
 						t1.start()
 					except EOFError:
@@ -85,7 +80,7 @@ class Server:
 			self.client_sock = conn
 			self.set.append(decodedMsg)
 			if len(self.set) >= 2:
-				self.handlePaxos(decodedMsg, conn)
+				self.handlePaxos(decodedMsg)
 		elif decodedMsg["msg"] == "PRINTBLOCKCHAIN":
 			self.printBlockchain(decodedMsg, conn)
 		elif decodedMsg["msg"] == "PRINTBALANCE":
@@ -93,7 +88,13 @@ class Server:
 		elif decodedMsg["msg"] == "PRINTSET":
 			self.printSet(decodedMsg, conn)
 		elif decodedMsg["msg"] == "CRASH":
+			msg = {}
+			msg["msg"] = "CRASH-ACK"
+			encMsg = pickle.dumps(msg)
+			conn.sendall(encMsg)
+			#conn.shutdown(socket.SHUT_RDWR)
 			print("Emulating server crash.")
+			#conn.close()
 			os._exit(1)
 		elif decodedMsg["msg"] == "RESYNC":
 			print("Received RESYNC request from ", decodedMsg["src-name"])
@@ -107,21 +108,19 @@ class Server:
 				b = self.blockchain[x]
 				copiedB = Block(b.tx1, b.tx2, b.prevHash, b.depth, b.nonce)
 				partialBlockchain.append(copiedB)
-			print("Sending partial blockchain to ", decodedMsg["src-name"])
+			
 			encMsg = pickle.dumps(createResyncAck(self, partialBlockchain))
 			s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 			try:
 				s.connect((self.globalConfig[decodedMsg["src-name"]]["ip-addr"],self.globalConfig[decodedMsg["src-name"]]["port"]))
 				time.sleep(randDelay())
 				s.sendall(encMsg)
-				s.close()
 			except socket.error as sock_err:
 				if(sock_err.errno == socket.errno.ECONNREFUSED):
 				        print("Server " + proc["name"] + " unreachable.")
 		elif decodedMsg["msg"] == "RESYNC-ACK":
-			print("Received blockchain from ", decodedMsg["src-name"])
+			#print("Received blockchain from ", decodedMsg["src-name"])
 			partialBlockchain = decodedMsg["blockchain"]
-			# self.blockchain.extend(partialBlockchain)
 			lock.acquire()
 			for b in partialBlockchain:
 				if (b.depth==len(self.blockchain)):
@@ -130,14 +129,11 @@ class Server:
 			if (len(self.set) >= 2):
 				x = {}
 				x["msg"] = "RETRY"
-				thp = threading.Thread(target=Server.handlePaxos, args=(self, x, conn,))
+				thp = threading.Thread(target=Server.handlePaxos, args=(self, x,))
 				thp.start()
 		else:
-			self.handlePaxos(decodedMsg, conn)
-		# 	t1 = threading.Thread(target=Server.handlePaxos, args=(self, decodedMsg, conn,))
-		# 	t1.start()
-	def handlePaxos(self, decodedMsg, conn):
-		### when implementing with blockchain, don't need decodedMsg, pass in block instead
+			self.handlePaxos(decodedMsg)
+	def handlePaxos(self, decodedMsg):
 		lock.acquire()
 		if (decodedMsg["msg"] == "TRANSFER" and self.inPaxos == False) or (decodedMsg["msg"] == "RETRY" and self.inPaxos == False):
 			if (len(self.set) >= 2):
@@ -149,89 +145,62 @@ class Server:
 					self.inPaxos = False
 		lock.release()
 		if decodedMsg["msg"] == "PREPARE":
-			#print("in here")
 			if (decodedMsg["bal-num"].depth > len(self.blockchain)):
 				self.askResync()
 			if (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
 				if (decodedMsg["src-name"] != self.config["name"] and self.proposer.balNum is not None and decodedMsg["bal-num"].seqNum > self.proposer.curSeqNum):
 					self.proposer.curSeqNum = decodedMsg["bal-num"].seqNum
-					print("Updated proposer balNum to ", str(self.proposer.balNum))
 				self.acceptor.recvPrepare(decodedMsg)
-				if (self.inPaxos == True): #and decodedMsg["bal-num"] > self.proposer.balNum):
+				if (self.inPaxos == True): 
 					prevLen = len(self.blockchain)
-					#while (prevLen == len(self.blockchain)):
 					time.sleep(15)
 					lock.acquire()
 					if (prevLen == len(self.blockchain)):
 						if (self.inPaxos == True):
 							self.inPaxos = False
-							#self.checkProposeReady()
 							print("Timed-out. Retrying. Prev len was ", prevLen, " but len blockchain now ", len(self.blockchain))
 							self.proposer.curSeqNum += 1
 							x = {}
 							x["msg"] = "RETRY"
-							thp = threading.Thread(target=Server.handlePaxos, args=(self, x, conn,))
+							thp = threading.Thread(target=Server.handlePaxos, args=(self, x,))
 							thp.start()
 					lock.release()
 			elif decodedMsg["bal-num"] and ((len(self.blockchain) == 0 and decodedMsg["bal-num"].depth > 0) or (len(self.blockchain) < decodedMsg["bal-num"].depth)):
 				self.askResync()
 		elif decodedMsg["msg"] == "PREP-ACK":
-			#print("in here")
 			if decodedMsg["accept-num"] is None or (decodedMsg["accept-num"] is not None and decodedMsg["accept-num"].depth == len(self.blockchain)):
 				self.proposer.handlePrepAck(decodedMsg)
 		elif decodedMsg["msg"] == "ACCEPT":
 			if (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
 				if (decodedMsg["src-name"] != self.config["name"] and self.proposer.balNum is not None and decodedMsg["bal-num"] >= self.proposer.balNum):
 					self.proposer.curSeqNum = decodedMsg["bal-num"].seqNum
-					print("Updated proposer balNum to ", str(self.proposer.balNum))
 				self.acceptor.recvAccept(decodedMsg)
-				# if (self.inPaxos == True): # and decodedMsg["bal-num"] > self.proposer.balNum):
-				# 	prevLen = len(self.blockchain)
-				# 	while (prevLen == len(self.blockchain)):
-				# 		time.sleep(10)
-				# 		if (self.inPaxos == True):
-				# 			self.inPaxos = False
-				# 			#self.checkProposeReady()
-				# 			x = {}
-				# 			x["msg"] = "RETRY"
-				# 			self.handlePaxos(x, conn)
 		elif decodedMsg["msg"] == "ACCEPT-ACK":
 			if decodedMsg["accept-num"] is None or (decodedMsg["accept-num"] is not None and decodedMsg["accept-num"].depth == len(self.blockchain)):
 				self.proposer.handleAcceptAck(decodedMsg)
 		elif decodedMsg["msg"] == "DECISION":
-			#if (decodedMsg["bal-num"] is None) or (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
 			if (decodedMsg["bal-num"] is not None and decodedMsg["bal-num"].depth == len(self.blockchain)):
 				self.proposer.curSeqNum = 0
 				self.handleDecision(decodedMsg)
-				print("in Paxos? ", self.inPaxos)
 				x = {}
 				x["msg"] = "RETRY"
-				self.handlePaxos(x, conn)
+				self.handlePaxos(x)
 			elif decodedMsg["bal-num"] and ((len(self.blockchain) == 0 and decodedMsg["bal-num"].depth > 0) or (len(self.blockchain) < decodedMsg["bal-num"].depth)):
 				self.askResync()
-				# print("Sending RESYNC request to server ", decodedMsg["src-name"])
-				# encMsg = pickle.dumps(createResyncRequest(self))
-				# b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-				# try:
-				# 	b.connect((self.globalConfig[decodedMsg["src-name"]]["ip-addr"],self.globalConfig[decodedMsg["src-name"]]["port"]))
-				# 	time.sleep(randDelay())
-				# 	b.sendall(encMsg)
-				# 	b.close()
-				# except socket.error as sock_err:
-				# 	if(sock_err.errno == socket.errno.ECONNREFUSED):
-				# 	        print("Server " + proc["name"] + " unreachable.")
 
 	def askResync(self):
-		print("Sending RESYNC request to all servers")
+		print("Sending RESYNC request to all servers.")
 		encMsg = pickle.dumps(createResyncRequest(self))
 		self.broadcast(encMsg)
 
 	def broadcast(self, m):
 		threads = []
 		for s in servers:
-			#if (s != self.name): <-- send to own acceptor too!
-			t = threading.Thread(target=Server.randDelayMsg, args=(self, m, self.globalConfig[s]),)
-			threads.append(t)
+			if (s in PARTITION[self.config["name"]]):
+				t = threading.Thread(target=Server.randDelayMsg, args=(self, m, self.globalConfig[s]),)
+				threads.append(t)
+			else:
+				print("NW partition - cannot speak to ", s)
 		for t in threads:
 			t.start()
 		for t in threads:
@@ -246,14 +215,12 @@ class Server:
 			b.close()
 		except socket.error as sock_err:
 			if(sock_err.errno == socket.errno.ECONNREFUSED):
-			        print("Server " + proc["name"] + " unreachable.")
+				pass
 
 
 	def checkProposeReady(self):
 		block = self.transactionCheck()
 		if block is not None:
-			#validate top 2 transaction with previous blocks here THEN mine
-			#form block here / mining with first 2 items in set THEN create ballotThread
 			self.createBallotThread(block)
 			return True
 		return False
@@ -266,7 +233,6 @@ class Server:
 				val = self.mineBlock(t1, t2)
 			else:
 				print("Previous 2 transactions not valid.")
-				#send both transactions to end of list
 				temp = self.set.pop(0)
 				self.set.append(temp)
 				temp = self.set.pop(0)
@@ -292,7 +258,6 @@ class Server:
 		return balance
 
 	def validateTrans(self, t1, t2):
-		#validate transaction with rest of block chain here using calcBalance
 		balance = self.calcBalance()
 		
 		return (balance[t1["sender"]] - t1["amount"] - t2["amount"] >= 0)
@@ -304,7 +269,6 @@ class Server:
 		return digest
 
 	def mineBlock(self, t1, t2):
-		#form block and mine here until get correct nonce.
 		prevHash = None
 		depth = 0
 		if (len(self.blockchain) > 0):
@@ -318,17 +282,11 @@ class Server:
 		self.proposer.createBallot(block, len(self.blockchain))
 
 	def handleDecision(self, dMsg):
-		# ADD TO BLOCKCHAIN
-		lock.acquire()
 		self.acceptor.recvDecision(dMsg)
-		# if (self.proposer.val is not None):
-		# 	print(str(self.proposer.val))
 		if (dMsg["bal-num"].depth == len(self.blockchain)):
-			
-			#if (dMsg["bal-num"].pid == self.config["pid"]) or (self.inPaxos == True and self.proposer.val is not None and dMsg["val"].tx1 == self.proposer.val.tx1 and dMsg["val"].tx2 == self.proposer.val.tx2):
 			self.inPaxos = False
 			if (len(self.set) >= 2 and dMsg["val"].tx1 == msgFormatTrans(self.set[0]) and dMsg["val"].tx2 == msgFormatTrans(self.set[1])):
-				tempMsg = createServerRes(self.config, dMsg, msgFormatTrans(self.set[0]) + " and " + msgFormatTrans(self.set[1]) + " are not valid transactions.", "TRANSFER-ACK")
+				tempMsg = createServerRes(self.config, dMsg, msgFormatTrans(self.set[0]) + " and " + msgFormatTrans(self.set[1]) + " have been committed to the blockchain.", "TRANSFER-ACK")
 				encMsg = pickle.dumps(tempMsg)
 				self.client_sock.sendall(encMsg)
 				self.set.pop(0) # pop first 2 items because committed successfully
@@ -341,15 +299,14 @@ class Server:
 				f.close()
 			print("New blockchain length: ", len(self.blockchain))
 			print("Commiting block to blockchain. Block: \n", dMsg["val"])
+			if (len(self.set) >= 2):
+				x = {}
+				x["msg"] = "RETRY"
+				self.handlePaxos(x)
+
 		else:
 			print("Not commiting block. Block Depth < Current Blockchain Depth")
-		lock.release()
-		# if (self.proposer.balNum is None or dMsg["bal-num"].seqNum > self.proposer.balNum.seqNum):
-		# 	self.proposer.balNum = dMsg["bal-num"]
-		# 	self.proposer.balNum.pid = self.config["pid"]
-		# 	print("Updated seq num to ", self.proposer.balNum.seqNum)
 	def printBlockchain(self, dMsg, conn):
-		#data = "Test Blockchain."
 		msg = createServerRes(self.config, dMsg, self.blockchain, "BLOCKCHAIN-ACK")
 		encMsg = pickle.dumps(msg)
 		conn.sendall(encMsg)
@@ -359,7 +316,7 @@ class Server:
 		encMsg = pickle.dumps(msg)
 		conn.sendall(encMsg)
 	def printSet(self, dMsg, conn):
-		print("printing set")
+		#print("printing set")
 		setList = []
 		for tran in self.set:
 			setList.append(msgFormatTrans(tran))
@@ -380,4 +337,4 @@ if __name__ == "__main__":
 		s.run()
 
 	else:
-		print("Format should be 'python server.py < A | B | C >'")
+		print("Format should be 'python server.py < A | B | C | D | E >")

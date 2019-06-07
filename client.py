@@ -17,6 +17,7 @@ clients = {'A', 'B', 'C', 'D', 'E'}
 class Client:
 	def __init__(self, config):
 		self.config = config;
+	### Run Client
 	def run(self):
 		while True:
 			s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -34,16 +35,19 @@ class Client:
 					else:
 						t1.start()
 				else:
-					print('Invalid command. Commands available: "moneyTransfer(<amt>, <c1>, <c2>)", "printBlockchain", "printBalance", "printSet"')
+					print('Invalid command. Commands available: "moneyTransfer(<amt>, <c1>, <c2>)", "printBlockchain", "printBalance", "printSet", "crash"')
 			except socket.error as sock_err:
 			    if(sock_err.errno == socket.errno.ECONNREFUSED):
 			        print("Server " + self.config["name"] + " unreachable. Please wait until server is back up.")
-
-			#s.close()
+	### Send message to server
 	def sendMsg(self, command, s):
 		#print("calling sendmsg")
 		if (command[:13] == "moneyTransfer"):
 			msgSend = createUserReq(command, self.config)
+		elif(command[:7] == "network"):
+			nodes = command.split(' ')
+			nodes.pop(0)
+			msgSend = createUserReq(command, self.config, nodes)
 		else:
 			msgSend = createUserReq(command, self.config)
 		#print("trying to send ", msgSend)
@@ -52,33 +56,41 @@ class Client:
 			time.sleep(randDelay())
 		s.sendall(encodedMsg)
 		#print("Command sent to server.")
-		res = None
-		while res is None:
+		if msgSend["msg"] == "TRANSFER":
+			try:
+				while True:
+					res = s.recv(4096)
+					if (res):
+						msgRecvd = pickle.loads(res)
+						if (msgRecvd["msg"] == 'TRANSFER-ACK'):
+							print(msgRecvd["body"])
+			except socket.timeout:
+				print("timed out")
+		elif msgSend["msg"] == "CRASH":
 			res = s.recv(4096)
 			if (res):
 				msgRecvd = pickle.loads(res)
-				#print("\n" + msgRecvd["body"])
-			# if (msgRecvd["res"] == 'SUCCESS'): #successfully added to blockchain
-			# 	print("Tranfer success.")
-			# 	break;
-			# elif(msgRecvd["res"] == 'FAIL'): #invalid OR other block/transaction got majority
-			# 	print("Transfer failed.")
-			# 	break;
+				if (msgRecvd["msg"] == 'CRASH-ACK'):
+					s.shutdown(socket.SHUT_RDWR)
+					s.close()
+		else:
+			res = s.recv(4096)
+			if (res):
+				msgRecvd = pickle.loads(res)
 				if (msgRecvd["msg"]  == 'BLOCKCHAIN-ACK'):
 					for b in msgRecvd["body"]:
-						print(str(b)) # some variation of this
-				#break;
+						print(str(b)) 
 				elif (msgRecvd["msg"] == 'BALANCE-ACK'):
 					print('Balance:')
-					for key in msgRecvd["body"]:
-						print("{}: ${}".format(key, msgRecvd["body"][key])) # some variation of this
+					# for key in msgRecvd["body"]:
+					# 	print("{}: ${}".format(key, msgRecvd["body"][key])) 
+					print("{}: ${}".format(self.config["name"], msgRecvd["body"][self.config["name"]])) 
 
 				elif(msgRecvd["msg"] == 'SET-ACK'):
 					print('Queued Transactions:')
 					for t in msgRecvd["body"]:
 						print(t) 
-				elif(msgRecvd["msg"] == 'TRANSFER-ACK'):
-					print(msgRecvd["body"])
+
 	def validateCommand(self, s):
 		if (s[:13] == "moneyTransfer"):
 			if (s.find("(") > -1 and s.find(")") > -1):
@@ -88,10 +100,18 @@ class Client:
 					return True
 				else:
 					return False
+		# elif(s[:7] == "network"):
+		# 	vals = s.split(' ')
+		# 	vals.pop(0)
+		# 	containsSelf = False
+		# 	for v in vals:
+		# 		if v not in clients:
+		# 			return False
+		# 		if v == self.config["name"]:
+		# 			containsSelf = True
+		# 	return containsSelf
 		else: 
 			return (s == "printBlockchain" or s == "printBalance" or s == "printSet" or s == "crash")
-	# def checkTransfer(self, s):
-	# 	return (s[:13] == "moneyTransfer")
 
 if __name__ == "__main__":
 	with open('config.json') as f:
@@ -103,4 +123,4 @@ if __name__ == "__main__":
 		c = Client(client_info)
 		c.run()
 	else:
-		print("Format should be 'python client.py < A | B | C | D | E >'")
+		print("Format should be 'python client.py < A | B | C | D | E >")

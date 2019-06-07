@@ -23,6 +23,9 @@ def createUserReq(ui, cmeta, vals=None):
 
 	if(ui == "crash"):
 		msg["msg"] = "CRASH"
+	# if(ui[:7] == "network"):
+	# 	msg["msg"] = "NETWORK"
+	# 	msg["partition-nodes"] = vals 
 	return msg
 
 def createServerRes(smeta, cMsg, sData, res): #sData holds what server whats to send in message (like for printing)
